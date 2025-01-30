@@ -12,6 +12,8 @@ from ezdxf.entities import MText
 
 from struct import *
 
+import libredwg.LibreDWG
+
 class BinaryStream:
     def __init__(self, base_stream):
         if type(base_stream) == bytes or type(base_stream) == bytearray:
@@ -115,6 +117,27 @@ class r2004_DataHeader():
             "}"
         )
 
+class r2004_PageInfo():
+    def __init__(self):
+        self.number = 0
+        self.size = 0
+        self.start_offset = 0
+    def __repr__(self):
+        return (
+            "{"
+            f'number: {self.number}, number: {self.size}, '
+            f'start offset: {self.start_offset:#04x}'
+            "}"
+        )
+
+    def __str__(self):
+        return (
+            "{"
+            f'number: {self.number}, number: {self.size}, '
+            f'start offset: {self.start_offset:#04x}'
+            "}"
+        )
+
 class r2004_PageDescription():
     def __init__(self, address: int = 0):
         self.address = address
@@ -125,6 +148,7 @@ class r2004_PageDescription():
         self.section_id = 0
         self.encrypted = 0
         self.name = ""
+        self.pages = []
 
     def read(self, stream:BinaryStream):
         self.size              = log('size_of_section',   stream.readInt64())
@@ -137,6 +161,13 @@ class r2004_PageDescription():
         b = stream.readBytes(64)
         print(hex_dump_bytes(b, chars=True))
         self.name              = log('name',              b.decode('ascii'))
+        for _ in range(self.page_count):
+            page_info = r2004_PageInfo()
+            page_info.number = stream.readInt32()
+            page_info.size = stream.readInt32()
+            page_info.start_offset = stream.readInt64()
+            self.pages.append(page_info)
+
     def __repr__(self):
         return (
             "{"
@@ -455,13 +486,14 @@ def decompress_bytes(bytez, decompressed_size):
     decompressed.extend(stream.readBytes(lit_length))
 
     if verbose_on: print(f'op: {opcode:#04x}, lit: {lit_length}, comp_bytes:  , comp_offset: ')
-
+    og_lit_length = lit_length
     while opcode != "":
+        old_opcode = opcode
         if opcode ==0x00: opcode = stream.readByteNum()
-        if verbose_on: print(f'op: {opcode:#04x}')
         if opcode == 0x11: break
+        old2 = opcode
         opcode, comp_bytes, comp_offset, lit_length = uncompressed_data_location(opcode, stream)
-        if verbose_on: print(f'op: {opcode:#04x}, lit: {lit_length}, src: {len(decompressed) - comp_offset - 1}, comp_bytes: {comp_bytes} , comp_offset: {comp_offset}, gap: {(comp_offset - comp_bytes)} ')
+        if verbose_on: print(f'({(decompressed_size + 1014 + og_lit_length) - len(decompressed)}) -O {old_opcode:#04x} <O {old2:#04x} <F {comp_offset:#04x} <C {comp_bytes}, <L {lit_length}')
         distance = comp_offset + 1    
         for _ in range(comp_bytes): decompressed.append(decompressed[-distance])
         if lit_length:
@@ -481,6 +513,7 @@ def read_system_section_map(stream):
     page_number = stream.readInt32()
     sections = []
     section_address = 0x100 # starting address
+
     while page_number is not None:
         section_size = stream.readInt32()
         parent = None
@@ -506,14 +539,12 @@ def read_data_section_map(stream: BinaryStream):
     _                = log('0x7400',           stream.readInt32(), True)
     _                = log('0x00',             stream.readInt32(), True)
     _                = log('unknown',          stream.readInt32())
-    current = 0
-    while current < num_descriptions and current < 3:
+
+    for _ in range(num_descriptions):
         desc = r2004_PageDescription()
         desc.read(stream)
-        current += 1
         results.append(desc)
-    bytez = stream.readBytes(800)
-    print(hex_dump_bytes(bytez, chars=True))
+
     return results
 
 def read_map_header(stream: BinaryStream):
@@ -626,9 +657,33 @@ def read_file(f):
     if version == "AC1018":
         read_ac1018(f)
 
-def parse_file():
-    with open("test_data/file1/F812452.dwg", "rb") as f:
+def parse_file(filename):
+    filename = "test_data/file1/F812452.dwg"
+    with open(filename, "rb") as f:
         read_file(f)
+    # import libredwg
+    # a = libredwg.LibreDWG.Dwg_Data()
+    # a.object = libredwg.LibreDWG.new_Dwg_Object_Array(1000)
+    # error = libredwg.LibreDWG.dwg_read_file(filename, a)
+
+    # if (error > 0): # critical errors
+    #     print("Error: ", error)
+    #     if (error > 127):
+    #         exit()
+
+    # print(".dwg version: %s" % a.header.version)
+    # print("Num objects: %d " % a.num_objects)
+
+    # #XXX TODO Error: Dwg_Object_LAYER_CONTROL object has no attribute 'tio'
+    # #print "Num layers: %d" % a.layer_control.tio.object.tio.LAYER_CONTROL.num_entries
+
+    # #XXX ugly, but works
+    # for i in range(0, a.num_objects):
+    #     obj = libredwg.LibreDWG.Dwg_Object_Array_getitem(a.object, i)
+    #     print(" Supertype: " ,   obj.supertype)
+    #     print("      Type: " ,   obj.type)
+
+
 
 if __name__ == '__main__':
 
@@ -645,4 +700,4 @@ if __name__ == '__main__':
     #             print(f'text: "{text['text'].replace("\n", "\\n")}", loc:{text['location']}', end=end_char)
     # else:
     #     print(json.dumps(text_pieces, **dump_kwargs))
-    parse_file()
+    parse_file(args.filename)
